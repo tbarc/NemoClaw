@@ -151,7 +151,14 @@ async function createSandbox(gpu) {
   step(3, 7, "Creating sandbox");
 
   const nameAnswer = await prompt("  Sandbox name [my-assistant]: ");
-  const sandboxName = nameAnswer || "my-assistant";
+  const sandboxName = (nameAnswer || "my-assistant").trim();
+
+  // Validate sandbox name — alphanumeric, hyphens, and underscores only
+  if (!/^[a-zA-Z0-9_-]+$/.test(sandboxName)) {
+    console.error(`  Invalid sandbox name: '${sandboxName}'`);
+    console.error("  Names must contain only letters, numbers, hyphens, and underscores.");
+    process.exit(1);
+  }
 
   // Check if sandbox already exists in registry
   const existing = registry.getSandbox(sandboxName);
@@ -162,7 +169,7 @@ async function createSandbox(gpu) {
       return sandboxName;
     }
     // Destroy old sandbox
-    run(`openshell sandbox delete ${sandboxName} 2>/dev/null || true`, { ignoreError: true });
+    run(`openshell sandbox delete "${sandboxName}" 2>/dev/null || true`, { ignoreError: true });
     registry.removeSandbox(sandboxName);
   }
 
@@ -181,7 +188,7 @@ async function createSandbox(gpu) {
   const basePolicyPath = path.join(ROOT, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml");
   const createArgs = [
     `--from "${buildCtx}/Dockerfile"`,
-    `--name ${sandboxName}`,
+    `--name "${sandboxName}"`,
     `--policy "${basePolicyPath}"`,
   ];
   if (gpu && gpu.nimCapable) createArgs.push("--gpu");
@@ -195,7 +202,7 @@ async function createSandbox(gpu) {
   run(`openshell sandbox create ${createArgs.join(" ")} -- env ${envArgs.join(" ")} nemoclaw-start 2>&1 | awk '/Sandbox allocated/{if(!seen){print;seen=1}next}1'`);
 
   // Forward dashboard port separately
-  run(`openshell forward start --background 18789 ${sandboxName}`, { ignoreError: true });
+  run(`openshell forward start --background 18789 "${sandboxName}"`, { ignoreError: true });
 
   // Clean up build context
   run(`rm -rf "${buildCtx}"`, { ignoreError: true });
