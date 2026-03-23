@@ -368,6 +368,7 @@ function sandboxPolicyList(sandboxName) {
 
 async function sandboxDestroy(sandboxName, args = []) {
   const skipConfirm = args.includes("--yes") || args.includes("--force");
+  const sandbox = registry.getSandbox(sandboxName);
   if (!skipConfirm) {
     const { prompt: askPrompt } = require("./lib/credentials");
     const answer = await askPrompt(
@@ -387,6 +388,9 @@ async function sandboxDestroy(sandboxName, args = []) {
 
   registry.removeSandbox(sandboxName);
   console.log(`  ${G}✓${R} Sandbox '${sandboxName}' destroyed`);
+  if (sandbox && (sandbox.provider === "ollama-k3s" || sandbox.provider === "lmstudio-k3s")) {
+    console.log("  Shared local inference sidecars stay running until uninstall or manual docker cleanup.");
+  }
 }
 
 // ── Help ─────────────────────────────────────────────────────────
@@ -406,7 +410,8 @@ function help() {
     nemoclaw <name> connect          Shell into a running sandbox
     nemoclaw <name> status           Sandbox health + NIM status
     nemoclaw <name> logs ${D}[--follow]${R}  Stream sandbox logs
-    nemoclaw <name> destroy          Stop NIM + delete sandbox ${D}(--yes to skip prompt)${R}
+    nemoclaw <name> destroy          Stop sandbox-owned NIM + delete sandbox ${D}(--yes to skip prompt)${R}
+                                     ${D}Shared Ollama/LM Studio sidecars keep running${R}
 
   ${G}Policy Presets:${R}
     nemoclaw <name> policy-add       Add a network or filesystem policy preset

@@ -10,12 +10,14 @@ const credentialsPath = require.resolve("../bin/lib/credentials.js");
 const runnerPath = require.resolve("../bin/lib/runner.js");
 const registryPath = require.resolve("../bin/lib/registry.js");
 const sidecarPath = require.resolve("../bin/lib/sidecar.js");
+const nimPath = require.resolve("../bin/lib/nim.js");
 
 function loadSelectInferenceProvider({
   promptImpl,
   runCaptureImpl,
   updateSandboxImpl = () => {},
   getSidecarImpl = null,
+  nimImpl = null,
   env = {},
 } = {}) {
   const originalExperimental = process.env.NEMOCLAW_EXPERIMENTAL;
@@ -26,11 +28,13 @@ function loadSelectInferenceProvider({
   delete require.cache[runnerPath];
   delete require.cache[registryPath];
   delete require.cache[sidecarPath];
+  delete require.cache[nimPath];
 
   const credentials = require(credentialsPath);
   const runner = require(runnerPath);
   const registry = require(registryPath);
   const sidecar = require(sidecarPath);
+  const nim = require(nimPath);
 
   credentials.prompt = promptImpl || (async () => "");
   credentials.ensureApiKey = async () => {};
@@ -39,6 +43,9 @@ function loadSelectInferenceProvider({
 
   if (getSidecarImpl) {
     sidecar.getSidecar = getSidecarImpl;
+  }
+  if (nimImpl) {
+    Object.assign(nim, nimImpl);
   }
 
   const onboard = require(onboardPath);
@@ -52,8 +59,10 @@ function loadSelectInferenceProvider({
       delete require.cache[runnerPath];
       delete require.cache[registryPath];
       delete require.cache[sidecarPath];
+      delete require.cache[nimPath];
     },
     selectInferenceProvider: onboard.selectInferenceProvider,
+    startDeferredRuntime: onboard.startDeferredRuntime,
   };
 }
 
@@ -264,6 +273,89 @@ describe("onboard provider selection UX", () => {
     } finally {
       delete process.env.NEMOCLAW_LOCAL_VRAM_THRESHOLD_MB;
       restore();
+    }
+  });
+
+  it("defers NIM startup until after sandbox creation", async () => {
+    const pulledModels = [];
+    const started = [];
+    const waited = [];
+    const { selectInferenceProvider, startDeferredRuntime, restore } = loadSelectInferenceProvider({
+      env: { NEMOCLAW_EXPERIMENTAL: "1" },
+      promptImpl: async (message) => {
+        if (message.includes("Choose [")) return "1";
+        if (message.includes("Choose model [1]")) return "";
+        return "";
+      },
+      runCaptureImpl: (command) => {
+        if (command.includes("localhost:11434/api/tags")) return "";
+        if (command.includes("localhost:1234/v1/models")) return "";
+        if (command.includes("localhost:8000/v1/models")) return "";
+        return "";
+      },
+      nimImpl: {
+        listModels: () => [{ name: "nim/model", minGpuMemoryMB: 1024 }],
+        pullNimImage: (model) => pulledModels.push(model),
+        startNimContainer: (sandboxName, model) => {
+          started.push({ sandboxName, model });
+          return `nemoclaw-nim-${sandboxName}`;
+        },
+        waitForNimHealth: () => {
+          waited.push(true);
+          return true;
+        },
+      },
+    });
+
+    try {
+      const selection = await selectInferenceProvider(null, {
+        type: "nvidia",
+        nimCapable: true,
+        totalMemoryMB: 8192,
+        perGpuMB: 8192,
+      });
+      expect(selection.provider).toBe("vllm-local");
+      expect(selection.model).toBe("nim/model");
+      expect(selection.deferredRuntime).toEqual({ type: "nim", model: "nim/model" });
+      expect(pulledModels).toEqual(["nim/model"]);
+      expect(started).toEqual([]);
+
+      const runtime = await startDeferredRuntime("real-sandbox", selection);
+      expect(runtime).toEqual({
+        model: "nim/model",
+        provider: "vllm-local",
+        nimContainer: "nemoclaw-nim-real-sandbox",
+      });
+      expect(started).toEqual([{ sandboxName: "real-sandbox", model: "nim/model" }]);
+      expect(waited).toEqual([true]);
+    } finally {
+      restore();
+    }
+  });
+
+  it("falls back to the default cloud model when deferred NIM startup fails", async () => {
+    const { startDeferredRuntime, restore } = loadSelectInferenceProvider({
+      env: { NVIDIA_API_KEY: "nvapi-test" },
+      nimImpl: {
+        startNimContainer: () => "nemoclaw-nim-failed",
+        waitForNimHealth: () => false,
+      },
+    });
+
+    try {
+      const runtime = await startDeferredRuntime("real-sandbox", {
+        model: "nim/model",
+        provider: "vllm-local",
+        deferredRuntime: { type: "nim", model: "nim/model" },
+      });
+      expect(runtime).toEqual({
+        model: "nvidia/nemotron-3-super-120b-a12b",
+        provider: "nvidia-nim",
+        nimContainer: null,
+      });
+    } finally {
+      restore();
+      delete process.env.NVIDIA_API_KEY;
     }
   });
 });

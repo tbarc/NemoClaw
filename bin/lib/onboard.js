@@ -21,6 +21,7 @@ const {
 const {
   CLOUD_MODEL_OPTIONS,
   DEFAULT_CLOUD_MODEL,
+  DEFAULT_LMSTUDIO_MODEL,
   DEFAULT_OLLAMA_MODEL,
   getOpenClawPrimaryModel,
   getProviderSelectionConfig,
@@ -724,6 +725,7 @@ async function selectInferenceProvider(sandboxName, gpu) {
   let provider = "nvidia-nim";
   let nimContainer = null;
   let pullProc = null;
+  let deferredRuntime = null;
 
   // Detect local inference options
   const useSidecar = process.platform === "linux"; // Linux: Docker sidecar avoids host-networking issues
@@ -886,18 +888,8 @@ async function selectInferenceProvider(sandboxName, gpu) {
 
         console.log(`  Pulling NIM image for ${model}...`);
         nim.pullNimImage(model);
-
-        console.log("  Starting NIM container...");
-        nimContainer = nim.startNimContainer(sandboxName, model);
-
-        console.log("  Waiting for NIM to become healthy...");
-        if (!nim.waitForNimHealth()) {
-          console.error("  NIM failed to start. Falling back to cloud API.");
-          model = null;
-          nimContainer = null;
-        } else {
-          provider = "vllm-local";
-        }
+        deferredRuntime = { type: "nim", model };
+        provider = "vllm-local";
       }
     } else if (selected.key === "ollama-sidecar" || selected.key === "lmstudio-sidecar") {
       // Docker sidecar — runs inference container sharing the gateway's network namespace.
@@ -1072,7 +1064,55 @@ async function selectInferenceProvider(sandboxName, gpu) {
     registry.updateSandbox(sandboxName, { model, provider, nimContainer });
   }
 
-  return { model, provider, nimContainer, pullProc };
+  return { model, provider, nimContainer, pullProc, deferredRuntime };
+}
+
+async function startDeferredRuntime(sandboxName, selection) {
+  if (!selection || !selection.deferredRuntime) {
+    return {
+      model: selection.model,
+      provider: selection.provider,
+      nimContainer: selection.nimContainer || null,
+    };
+  }
+
+  const runtime = selection.deferredRuntime;
+  if (runtime.type !== "nim") {
+    return {
+      model: selection.model,
+      provider: selection.provider,
+      nimContainer: selection.nimContainer || null,
+    };
+  }
+
+  console.log("  Starting NIM container...");
+  const nimContainer = nim.startNimContainer(sandboxName, runtime.model);
+
+  console.log("  Waiting for NIM to become healthy...");
+  if (!nim.waitForNimHealth()) {
+    console.error("  NIM failed to start. Falling back to cloud API.");
+    let model = DEFAULT_CLOUD_MODEL;
+    if (isNonInteractive()) {
+      if (!process.env.NVIDIA_API_KEY) {
+        console.error("  NVIDIA_API_KEY is required for cloud fallback in non-interactive mode.");
+        process.exit(1);
+      }
+    } else {
+      await ensureApiKey();
+      model = (await promptCloudModel()) || DEFAULT_CLOUD_MODEL;
+    }
+    return {
+      model,
+      provider: "nvidia-nim",
+      nimContainer: null,
+    };
+  }
+
+  return {
+    model: selection.model,
+    provider: "vllm-local",
+    nimContainer,
+  };
 }
 
 // ── Step 5: Inference provider ───────────────────────────────────
@@ -1423,8 +1463,10 @@ async function onboard(opts = {}) {
 
   const gpu = await preflight();
   await startGateway(gpu);
-  const { model, provider, nimContainer, pullProc } = await selectInferenceProvider(null, gpu);
-  const sandboxName = await createSandbox(gpu, model);
+  const selection = await selectInferenceProvider(null, gpu);
+  const sandboxName = await createSandbox(gpu, selection.model);
+  const { model, provider, nimContainer } = await startDeferredRuntime(sandboxName, selection);
+  const { pullProc } = selection;
   registry.updateSandbox(sandboxName, { model, provider, nimContainer });
   awaitModelPull(provider, model, pullProc);
   await setupInference(sandboxName, model, provider);
@@ -1441,5 +1483,6 @@ module.exports = {
   isSandboxReady,
   onboard,
   selectInferenceProvider,
+  startDeferredRuntime,
   supportsLmstudioSidecar,
 };
