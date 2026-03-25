@@ -1,5 +1,5 @@
 --- a/dist/config-CO7zBdn8.js	2026-03-24 22:29:33
-+++ b/dist/config-CO7zBdn8.js	2026-03-25 13:27:34
++++ b/dist/config-CO7zBdn8.js	2026-03-25 13:54:12
 @@ -14376,8 +14376,36 @@
  		}),
  		parseJson: (raw) => deps.json5.parse(raw)
@@ -7,11 +7,11 @@
 +}
 +function _nemoClawMergeOverrides(cfg) {
 +	const _p = (typeof process !== "undefined" && process.env || {}).OPENCLAW_CONFIG_OVERRIDES_FILE;
-+	console.log("[nemoclaw] config overrides shim: OPENCLAW_CONFIG_OVERRIDES_FILE=" + (_p || "(not set)"));
++	try { fs$1.appendFileSync("/sandbox/.openclaw-data/nemoclaw-shim.log", new Date().toISOString() + " shim called, OPENCLAW_CONFIG_OVERRIDES_FILE=" + (_p || "(not set)") + "\n"); } catch(_) {}
 +	if (!_p) return cfg;
 +	try {
 +		const _raw = fs$1.readFileSync(_p, "utf-8");
-+		console.log("[nemoclaw] config overrides: read " + _raw.length + " bytes from " + _p);
++		try { fs$1.appendFileSync("/sandbox/.openclaw-data/nemoclaw-shim.log", new Date().toISOString() + " read " + _raw.length + " bytes from " + _p + "\n"); } catch(_) {}
 +		const _ov = JSON5.parse(_raw);
 +		if (_ov && typeof _ov === "object") {
 +			delete _ov.gateway;
@@ -23,11 +23,11 @@
 +				}
 +				return s;
 +			};
-+			console.log("[nemoclaw] config overrides: merged successfully");
++			try { fs$1.appendFileSync("/sandbox/.openclaw-data/nemoclaw-shim.log", new Date().toISOString() + " merged successfully\n"); } catch(_) {}
 +			return _dm(cfg, _ov);
 +		}
 +	} catch (e) {
-+		if (e.code === "ENOENT") { console.log("[nemoclaw] config overrides: file not found (ok, no overrides)"); }
++		if (e.code === "ENOENT") { try { fs$1.appendFileSync("/sandbox/.openclaw-data/nemoclaw-shim.log", new Date().toISOString() + " ENOENT (no overrides file)\n"); } catch(_) {} }
 +		else { console.warn("[nemoclaw] config overrides error:", e.message); }
 +	}
 +	return cfg;

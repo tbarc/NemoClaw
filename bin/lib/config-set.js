@@ -57,28 +57,47 @@ function sandboxRun(sandboxName, script) {
 }
 
 /**
- * Read the current overrides file from inside the sandbox.
+ * Read the current overrides file from inside the sandbox via download.
  */
 function readOverrides(sandboxName) {
-  const raw = sandboxRun(sandboxName, `cat ${OVERRIDES_PATH} 2>/dev/null`);
-  if (!raw || raw.trim() === "") return {};
-  // sandbox connect may include shell prompt noise — extract the JSON
-  const jsonMatch = raw.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) return {};
+  const os = require("os");
+  const tmpDir = path.join(os.tmpdir(), `nemoclaw-dl-${Date.now()}`);
   try {
-    return JSON.parse(jsonMatch[0]);
+    const gwFlag = process.env.OPENSHELL_GATEWAY ? `-g ${shellQuote(process.env.OPENSHELL_GATEWAY)}` : "";
+    runCapture(
+      `openshell sandbox download ${gwFlag} ${shellQuote(sandboxName)} ${OVERRIDES_PATH} ${shellQuote(tmpDir)} 2>&1`,
+      { ignoreError: true }
+    );
+    const dlFile = path.join(tmpDir, "config-overrides.json5");
+    if (!fs.existsSync(dlFile)) return {};
+    const raw = fs.readFileSync(dlFile, "utf-8");
+    return JSON.parse(raw);
   } catch {
     return {};
+  } finally {
+    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
   }
 }
 
 /**
- * Write the overrides object back into the sandbox.
+ * Write the overrides object back into the sandbox via file upload.
+ * sandbox connect sessions can't write to the filesystem (different mount
+ * namespace), so we use openshell sandbox upload instead.
  */
 function writeOverrides(sandboxName, overrides) {
+  const os = require("os");
   const json = JSON.stringify(overrides, null, 2);
-  const script = `cat > ${OVERRIDES_PATH} <<'EOF_OV'\n${json}\nEOF_OV`;
-  return sandboxRun(sandboxName, script);
+  const tmpFile = path.join(os.tmpdir(), "config-overrides.json5");
+  fs.writeFileSync(tmpFile, json);
+  try {
+    const gwFlag = process.env.OPENSHELL_GATEWAY ? `-g ${shellQuote(process.env.OPENSHELL_GATEWAY)}` : "";
+    runCapture(
+      `openshell sandbox upload ${gwFlag} ${shellQuote(sandboxName)} ${shellQuote(tmpFile)} /sandbox/.openclaw-data/ 2>&1`,
+      { ignoreError: false }
+    );
+  } finally {
+    fs.unlinkSync(tmpFile);
+  }
 }
 
 /**

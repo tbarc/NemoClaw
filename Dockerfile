@@ -51,15 +51,15 @@ RUN mkdir -p /sandbox/.openclaw-data/agents/main/agent \
     && ln -s /sandbox/.openclaw-data/update-check.json /sandbox/.openclaw/update-check.json \
     && chown -R sandbox:sandbox /sandbox/.openclaw /sandbox/.openclaw-data
 
-# Install OpenClaw CLI and apply config overrides shim patch.
-# The patch adds OPENCLAW_CONFIG_OVERRIDES_FILE support: a deep-merged overlay
+# Install OpenClaw CLI and apply config overrides shim.
+# The shim adds OPENCLAW_CONFIG_OVERRIDES_FILE support: a deep-merged overlay
 # file that enables runtime config changes without modifying the frozen
-# openclaw.json.  See patches/openclaw-config-overrides.patch for details.
-COPY patches/openclaw-config-overrides.patch /tmp/openclaw-config-overrides.patch
+# openclaw.json.  Applied to ALL dist entry points because the bundler
+# duplicates resolveConfigForRead across multiple chunks.
+COPY patches/apply-openclaw-shim.js /tmp/apply-openclaw-shim.js
 RUN npm install -g openclaw@2026.3.11 \
-    && cd /usr/local/lib/node_modules/openclaw \
-    && patch -p1 < /tmp/openclaw-config-overrides.patch \
-    && rm /tmp/openclaw-config-overrides.patch
+    && node /tmp/apply-openclaw-shim.js /usr/local/lib/node_modules/openclaw \
+    && rm /tmp/apply-openclaw-shim.js
 
 # Install PyYAML for blueprint runner
 RUN pip3 install --break-system-packages pyyaml
