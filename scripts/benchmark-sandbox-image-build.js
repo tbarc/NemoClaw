@@ -53,7 +53,9 @@ function makeTempWorktree(mainRef, currentRepo) {
 function removeWorktree(worktreeRoot, currentRepo) {
   try {
     run("git", ["worktree", "remove", "--force", worktreeRoot], { cwd: currentRepo });
-  } catch {}
+  } catch {
+    // Best-effort cleanup; remove the temp directory either way.
+  }
   fs.rmSync(worktreeRoot, { recursive: true, force: true });
 }
 
