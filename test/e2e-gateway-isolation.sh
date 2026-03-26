@@ -125,9 +125,11 @@ fi
 # ── Test 7: Entrypoint PATH is locked to system dirs ─────────────
 
 info "7. Entrypoint locks PATH to system directories"
-# Run the entrypoint preamble (up to the PATH export) and verify the result
-OUT=$(run_as_root "bash -c 'source <(head -21 /usr/local/bin/nemoclaw-start) 2>/dev/null; echo \$PATH'")
-if echo "$OUT" | grep -q "^/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin$"; then
+# Verify the entrypoint exports a locked-down PATH early in the script.
+# Previous approach sourced head -N lines but that activates set -euo pipefail
+# in the subshell, which is fragile across bash versions and CI environments.
+OUT=$(run_as_root "grep -n 'export PATH=' /usr/local/bin/nemoclaw-start | head -1")
+if echo "$OUT" | grep -q 'export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"'; then
   pass "PATH is locked to system directories"
 else
   fail "PATH not locked as expected: $OUT"
